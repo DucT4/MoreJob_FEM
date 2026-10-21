@@ -8,6 +8,10 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>More Job IL</string>
+	<key>NSCameraUsageDescription</key>
+	<string>More Job dùng camera cho buổi phỏng vấn thử với AI.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>More Job dùng micro để ghi âm câu trả lời phỏng vấn.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

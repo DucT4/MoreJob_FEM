@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'web_portal.dart';
 
 void main() => runApp(const MoreJobApp());
 
@@ -145,6 +146,14 @@ class _AuthPageState extends State<AuthPage> {
                           : 'Chưa có tài khoản? Đăng ký',
                     ),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const WebPortalHub()),
+                    ),
+                    icon: const Icon(Icons.public),
+                    label: const Text('Khám phá tính năng web'),
+                  ),
                 ],
               ),
             ),
@@ -166,7 +175,19 @@ class _HomePageState extends State<HomePage> {
   int tab = 0;
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('More Job IL')),
+    appBar: AppBar(
+      title: const Text('More Job IL'),
+      actions: [
+        IconButton(
+          tooltip: 'Tất cả tính năng web',
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const WebPortalHub()),
+          ),
+          icon: const Icon(Icons.public),
+        ),
+      ],
+    ),
     body: IndexedStack(
       index: tab,
       children: [

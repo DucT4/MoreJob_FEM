@@ -37,6 +37,10 @@ dependencies:
   http: ^1.6.0
   flutter_secure_storage: ^11.2.0
   file_picker: ^13.1.0
+  webview_flutter: ^4.14.1
+  url_launcher: ^6.3.3
+  webview_flutter_android: ^4.14.1
+  permission_handler: ^13.0.2
 
 dev_dependencies:
   flutter_test:
