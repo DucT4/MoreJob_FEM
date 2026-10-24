@@ -1,7 +1,13 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'admin_pages.dart';
+import 'ai_interview.dart';
 import 'api.dart';
+import 'billing_pages.dart';
+import 'cv_studio.dart';
+import 'student_pages.dart';
+import 'theme.dart';
+import 'utilities.dart';
 import 'web_portal.dart';
 
 void main() => runApp(const MoreJobApp());
@@ -17,37 +23,63 @@ class MoreJobApp extends StatefulWidget {
 class _MoreJobAppState extends State<MoreJobApp> {
   late Future<bool> session = api.restore();
   void changed() => setState(() => session = Future.value(api.user != null));
+
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'More Job IL',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF146B63)),
-      useMaterial3: true,
-    ),
-    home: FutureBuilder<bool>(
-      future: session,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return snapshot.data!
-            ? HomePage(onLogout: changed)
-            : AuthPage(onLogin: changed);
-      },
-    ),
-  );
+        title: 'MoreJob - Nền tảng Tuyển dụng & AI Career Copilot',
+        debugShowCheckedModeBanner: false,
+        theme: MoreJobTheme.lightTheme,
+        home: FutureBuilder<bool>(
+          future: session,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (!snapshot.data!) {
+              return AuthPage(onLogin: changed);
+            }
+            if (api.isAdmin) {
+              return AdminPortalPage(
+                api: api,
+                onLogout: () async {
+                  await api.logout();
+                  changed();
+                },
+              );
+            }
+            return HomePage(onLogout: changed);
+          },
+        ),
+      );
 }
 
 void showError(BuildContext context, Object error) {
   if (context.mounted) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(error.toString())));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error.toString()),
+        backgroundColor: MoreJobColors.danger,
+      ),
+    );
   }
 }
 
+void showSuccess(BuildContext context, String message) {
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: MoreJobColors.navy,
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// AUTH & PUBLIC LANDING / RECRUITMENT FEED + UTILITIES BEFORE LOGIN
+// =============================================================================
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key, required this.onLogin});
   final VoidCallback onLogin;
@@ -56,17 +88,49 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
+  int _publicTab = 0; // 0: Đăng nhập/Đăng ký, 1: Việc làm công khai, 2: 9 Tiện ích
   final name = TextEditingController();
   final email = TextEditingController();
   final password = TextEditingController();
+  final _publicKeywordCtrl = TextEditingController();
   bool register = false;
   bool busy = false;
+  List<dynamic> _publicJobs = [];
+  bool _loadingPublicJobs = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPublicListings();
+  }
+
   @override
   void dispose() {
     name.dispose();
     email.dispose();
     password.dispose();
+    _publicKeywordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPublicListings() async {
+    setState(() => _loadingPublicJobs = true);
+    try {
+      final res = await api.get(
+        '/recruitment-listings',
+        query: {
+          'page': '0',
+          'size': '12',
+          if (_publicKeywordCtrl.text.trim().isNotEmpty)
+            'keyword': _publicKeywordCtrl.text.trim(),
+        },
+      );
+      _publicJobs = MoreJobApi.pageItems(res);
+    } catch (_) {
+      _publicJobs = [];
+    } finally {
+      if (mounted) setState(() => _loadingPublicJobs = false);
+    }
   }
 
   Future<void> submit() async {
@@ -92,78 +156,236 @@ class _AuthPageState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
+        appBar: AppBar(
+          title: const Row(
+            children: [
+              MoreJobLogoText(fontSize: 22),
+              SizedBox(width: 10),
+              StatusPill(label: 'AI Career Copilot', color: MoreJobColors.brand),
+            ],
+          ),
+        ),
+        body: IndexedStack(
+          index: _publicTab,
+          children: [
+            _buildLoginCard(context),
+            _buildPublicRecruitmentFeed(),
+            const UtilitiesHubPage(embedded: true),
+          ],
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _publicTab,
+          onDestinationSelected: (idx) => setState(() => _publicTab = idx),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.login_rounded),
+              label: 'Tài khoản',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.work_outline_rounded),
+              label: 'Việc làm',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.grid_view_rounded),
+              label: '9 Tiện ích',
+            ),
+          ],
+        ),
+      );
+
+  Widget _buildLoginCard(BuildContext context) {
+    return SafeArea(
       child: Center(
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 430),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(
-                    Icons.work_outline,
-                    size: 64,
-                    color: Color(0xFF146B63),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'More Job IL',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 28),
-                  if (register)
-                    TextField(
-                      controller: name,
-                      decoration: const InputDecoration(labelText: 'Họ tên'),
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [MoreJobColors.navy, Color(0xFF1A4F8B)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                  TextField(
-                    controller: email,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(labelText: 'Email'),
+                    borderRadius: BorderRadius.circular(22),
                   ),
-                  TextField(
-                    controller: password,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Mật khẩu'),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      StatusPill(
+                        label: 'Nền tảng việc làm thế hệ mới',
+                        color: MoreJobColors.brand,
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'Kết nối Sinh viên & Doanh nghiệp bằng AI Matching',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          height: 1.3,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Tạo CV chuẩn ATS, phân tích độ khớp JD, luyện phỏng vấn thử AI 1-1 và 9 bộ công cụ sự nghiệp miễn phí.',
+                        style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: busy ? null : submit,
-                    child: Text(
-                      register ? 'Tạo tài khoản sinh viên' : 'Đăng nhập',
+                ),
+                const SizedBox(height: 18),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          register
+                              ? 'Đăng ký tài khoản Ứng viên'
+                              : 'Đăng nhập vào MoreJob',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: MoreJobColors.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        if (register) ...[
+                          TextField(
+                            controller: name,
+                            decoration: const InputDecoration(
+                              labelText: 'Họ và tên',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        TextField(
+                          controller: email,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            labelText: 'Email (Ứng viên hoặc Admin)',
+                            prefixIcon: Icon(Icons.email_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: password,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Mật khẩu',
+                            prefixIcon: Icon(Icons.lock_outline),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        ElevatedButton(
+                          onPressed: busy ? null : submit,
+                          child: Text(
+                            busy
+                                ? 'Đang xử lý...'
+                                : (register ? 'Tạo tài khoản ngay' : 'Đăng nhập'),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => setState(() => register = !register),
+                          child: Text(
+                            register
+                                ? 'Đã có tài khoản? Đăng nhập'
+                                : 'Chưa có tài khoản? Đăng ký ứng viên mới',
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  TextButton(
-                    onPressed: busy
-                        ? null
-                        : () => setState(() => register = !register),
-                    child: Text(
-                      register
-                          ? 'Đã có tài khoản? Đăng nhập'
-                          : 'Chưa có tài khoản? Đăng ký',
-                    ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const WebPortalHub()),
-                    ),
-                    icon: const Icon(Icons.public),
-                    label: const Text('Khám phá tính năng web'),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _buildPublicRecruitmentFeed() {
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _publicKeywordCtrl,
+                  decoration: const InputDecoration(
+                    hintText: 'Tìm việc làm theo vị trí, kỹ năng, công ty...',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onSubmitted: (_) => _loadPublicListings(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _loadPublicListings,
+                child: const Text('Tìm'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _loadingPublicJobs
+              ? const Center(child: CircularProgressIndicator())
+              : _publicJobs.isEmpty
+                  ? const Center(
+                      child: Text('Đăng nhập để khám phá toàn bộ tin tuyển dụng.'),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _publicJobs.length,
+                      itemBuilder: (context, index) {
+                        final job = _publicJobs[index] as Map<String, dynamic>;
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.all(14),
+                            leading: const CircleAvatar(
+                              backgroundColor: MoreJobColors.brandSoft,
+                              child: Icon(Icons.work_outline,
+                                  color: MoreJobColors.brand),
+                            ),
+                            title: Text(
+                              (job['title'] ?? 'Vị trí tuyển dụng').toString(),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: Text(
+                              '${job['companyName'] ?? 'Doanh nghiệp'} • ${job['location'] ?? 'Việt Nam'}',
+                            ),
+                            trailing: ElevatedButton(
+                              onPressed: () => setState(() => _publicTab = 0),
+                              child: const Text('Ứng tuyển'),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
 }
 
+// =============================================================================
+// AUTHENTICATED STUDENT WORKSPACE (HOME PAGE)
+// =============================================================================
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.onLogout});
   final VoidCallback onLogout;
@@ -173,752 +395,869 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int tab = 0;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('More Job IL'),
-      actions: [
-        IconButton(
-          tooltip: 'Tất cả tính năng web',
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const WebPortalHub()),
-          ),
-          icon: const Icon(Icons.public),
-        ),
-      ],
-    ),
-    body: IndexedStack(
-      index: tab,
-      children: [
-        JobsPage(active: tab == 0),
-        SavedPage(active: tab == 1),
-        ApplicationsPage(active: tab == 2),
-        ProfilePage(active: tab == 3, onLogout: widget.onLogout),
-      ],
-    ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: tab,
-      onDestinationSelected: (index) => setState(() => tab = index),
-      destinations: const [
-        NavigationDestination(icon: Icon(Icons.search), label: 'Tìm việc'),
-        NavigationDestination(
-          icon: Icon(Icons.bookmark_outline),
-          label: 'Đã lưu',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.assignment_outlined),
-          label: 'Đơn ứng tuyển',
-        ),
-        NavigationDestination(icon: Icon(Icons.person_outline), label: 'Hồ sơ'),
-      ],
-    ),
-  );
-}
+  bool loading = true;
 
-List<Map<String, dynamic>> pageItems(dynamic data) => (data['content'] as List)
-    .map((item) => Map<String, dynamic>.from(item as Map))
-    .toList();
+  // Core data
+  List<dynamic> jobs = [];
+  List<dynamic> recommended = [];
+  List<dynamic> saved = [];
+  List<dynamic> cvs = [];
+  List<dynamic> applications = [];
+  List<dynamic> notifications = [];
+  Map<String, dynamic>? profile;
+  int unread = 0;
 
-class JobsPage extends StatefulWidget {
-  const JobsPage({super.key, required this.active});
-  final bool active;
-  @override
-  State<JobsPage> createState() => _JobsPageState();
-}
-
-class _JobsPageState extends State<JobsPage> {
+  // Recruitment & CV Match Batch state
   final keyword = TextEditingController();
-  final location = TextEditingController();
-  int page = 0;
-  late Future<dynamic> result = load();
-  Future<dynamic> load() => api.get(
-    '/jobs',
-    query: {
-      'page': '$page',
-      'size': '10',
-      'keyword': keyword.text.trim(),
-      'location': location.text.trim(),
-    },
-  );
-  void refresh() => setState(() => result = load());
+  final locationCtrl = TextEditingController();
+  int? _selectedMatchCvId;
+  Map<String, dynamic>? _activeMatchBatch;
+  bool _runningMatch = false;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAll();
+  }
+
   @override
   void dispose() {
     keyword.dispose();
-    location.dispose();
+    locationCtrl.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: keyword,
-                decoration: const InputDecoration(
-                  labelText: 'Từ khóa',
-                  prefixIcon: Icon(Icons.search),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: location,
-                decoration: const InputDecoration(labelText: 'Địa điểm'),
-              ),
-            ),
-            IconButton(
-              onPressed: () {
-                page = 0;
-                refresh();
-              },
-              icon: const Icon(Icons.tune),
-              tooltip: 'Lọc',
-            ),
-          ],
-        ),
-      ),
-      Expanded(
-        child: DataList(
-          result: result,
-          builder: (items) => ListView.builder(
-            itemCount: items.length,
-            itemBuilder: (context, index) => JobCard(
-              job: items[index],
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => JobDetailPage(id: items[index]['id'] as int),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-      FutureBuilder<dynamic>(
-        future: result,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const SizedBox.shrink();
-          final data = snapshot.data as Map<String, dynamic>;
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                onPressed: page > 0
-                    ? () {
-                        page--;
-                        refresh();
-                      }
-                    : null,
-                icon: const Icon(Icons.chevron_left),
-              ),
-              Text('Trang ${page + 1} / ${data['totalPages']}'),
-              IconButton(
-                onPressed: data['last'] == false
-                    ? () {
-                        page++;
-                        refresh();
-                      }
-                    : null,
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          );
-        },
-      ),
-    ],
-  );
-}
-
-class DataList extends StatelessWidget {
-  const DataList({super.key, required this.result, required this.builder});
-  final Future<dynamic> result;
-  final Widget Function(List<Map<String, dynamic>>) builder;
-  @override
-  Widget build(BuildContext context) => FutureBuilder<dynamic>(
-    future: result,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      if (snapshot.hasError) {
-        return Center(
-          child: Text(snapshot.error.toString(), textAlign: TextAlign.center),
-        );
-      }
-      final items = pageItems(snapshot.data);
-      if (items.isEmpty) return const Center(child: Text('Chưa có dữ liệu.'));
-      return builder(items);
-    },
-  );
-}
-
-class JobCard extends StatelessWidget {
-  const JobCard({super.key, required this.job, required this.onTap});
-  final Map<String, dynamic> job;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-    child: ListTile(
-      title: Text('${job['title'] ?? ''}'),
-      subtitle: Text(
-        '${job['location'] ?? ''} · ${job['salaryLabel'] ?? 'Thỏa thuận'}',
-      ),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
-    ),
-  );
-}
-
-class JobDetailPage extends StatefulWidget {
-  const JobDetailPage({super.key, required this.id});
-  final int id;
-  @override
-  State<JobDetailPage> createState() => _JobDetailPageState();
-}
-
-class _JobDetailPageState extends State<JobDetailPage> {
-  late final Future<dynamic> detail = api.get('/jobs/${widget.id}');
-  Future<void> save() async {
+  Future<void> loadAll() async {
+    setState(() => loading = true);
     try {
-      await api.post('/students/me/saved-jobs', {'jobId': widget.id});
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Đã lưu việc làm.')));
+      final results = await Future.wait([
+        api.get(
+          '/recruitment-listings',
+          query: {
+            'page': '0',
+            'size': '20',
+            if (keyword.text.trim().isNotEmpty) 'keyword': keyword.text.trim(),
+            if (locationCtrl.text.trim().isNotEmpty)
+              'location': locationCtrl.text.trim(),
+          },
+        ).catchError(
+          (_) => api.get(
+            '/jobs',
+            query: {
+              'page': '0',
+              'size': '20',
+              if (keyword.text.trim().isNotEmpty)
+                'keyword': keyword.text.trim(),
+            },
+          ).catchError((_) => []),
+        ),
+        api.get('/students/me/recommended-jobs').catchError((_) => []),
+        api.get('/students/me/saved-jobs').catchError((_) => []),
+        api.get('/students/me/cvs').catchError((_) => []),
+        api.get('/students/me/applications').catchError((_) => []),
+        api.get('/students/me').catchError((_) => null),
+        api.get('/notifications/me').catchError((_) => []),
+        api.get('/notifications/me/unread-count').catchError((_) => null),
+      ]);
+      jobs = MoreJobApi.pageItems(results[0]);
+      recommended = MoreJobApi.pageItems(results[1]);
+      saved = MoreJobApi.pageItems(results[2]);
+      cvs = MoreJobApi.pageItems(results[3]);
+      applications = MoreJobApi.pageItems(results[4]);
+      profile = results[5] is Map<String, dynamic>
+          ? results[5] as Map<String, dynamic>
+          : null;
+      notifications = MoreJobApi.pageItems(results[6]);
+      final unreadRaw = results[7];
+      unread = unreadRaw is Map
+          ? (unreadRaw['unreadCount'] ?? unreadRaw['count'] ?? 0) as int
+          : (unreadRaw is int ? unreadRaw : 0);
+
+      if (cvs.isNotEmpty && _selectedMatchCvId == null) {
+        final firstId = cvs.first['id'];
+        _selectedMatchCvId =
+            firstId is int ? firstId : int.tryParse('$firstId');
       }
     } catch (error) {
       if (mounted) showError(context, error);
     }
+    if (mounted) setState(() => loading = false);
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Chi tiết việc làm')),
-    body: FutureBuilder<dynamic>(
-      future: detail,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return Center(
-            child: Text(
-              snapshot.hasError ? snapshot.error.toString() : 'Đang tải...',
-            ),
-          );
+  Future<void> _runCvMatchBatch() async {
+    setState(() => _runningMatch = true);
+    try {
+      final res = await api.post(
+        '/students/me/matches',
+        body: {
+          if (_selectedMatchCvId != null) 'cvId': _selectedMatchCvId,
+          if (keyword.text.trim().isNotEmpty) 'keyword': keyword.text.trim(),
+          if (locationCtrl.text.trim().isNotEmpty)
+            'location': locationCtrl.text.trim(),
+        },
+      );
+      if (res is Map<String, dynamic>) {
+        final batchId = res['id'] ?? res['batchId'];
+        if (batchId != null) {
+          final detail = await api
+              .get('/students/me/matches/$batchId')
+              .catchError((_) => res);
+          if (detail is Map<String, dynamic>) {
+            setState(() => _activeMatchBatch = detail);
+          }
+        } else {
+          setState(() => _activeMatchBatch = res);
         }
-        final job = snapshot.data as Map<String, dynamic>;
-        return ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            Text(
-              '${job['title']}',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            Text('${job['companyName'] ?? ''} · ${job['location'] ?? ''}'),
-            const SizedBox(height: 12),
-            Text('${job['salaryLabel'] ?? 'Thỏa thuận'}'),
-            const SizedBox(height: 20),
-            Text('${job['description'] ?? ''}'),
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: save,
-              icon: const Icon(Icons.bookmark_add_outlined),
-              label: const Text('Lưu tin'),
-            ),
-            FilledButton(
-              onPressed: job['isFull'] == true
-                  ? null
-                  : () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => ApplyPage(job: job)),
-                    ),
-              child: const Text('Ứng tuyển'),
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
-
-class SavedPage extends StatefulWidget {
-  const SavedPage({super.key, required this.active});
-  final bool active;
-  @override
-  State<SavedPage> createState() => _SavedPageState();
-}
-
-class _SavedPageState extends State<SavedPage> {
-  int page = 0;
-  late Future<dynamic> result = load();
-  Future<dynamic> load() => api.get(
-    '/students/me/saved-jobs',
-    query: {'page': '$page', 'size': '10'},
-  );
-  @override
-  void didUpdateWidget(SavedPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) setState(() => result = load());
+        if (mounted) {
+          showSuccess(context, 'Đã phân tích CV Match Batch thành công!');
+        }
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _runningMatch = false);
+    }
   }
 
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Expanded(
-        child: DataList(
-          result: result,
-          builder: (items) => ListView(
-            children: items.map((entry) {
-              final job = Map<String, dynamic>.from(entry['job'] as Map);
-              return Dismissible(
-                key: ValueKey(entry['id']),
-                background: Container(
-                  color: Colors.red.shade100,
-                  alignment: Alignment.centerRight,
-                  child: const Icon(Icons.delete),
-                ),
-                onDismissed: (_) async {
-                  try {
-                    await api.delete(
-                      '/students/me/saved-jobs/${entry['jobId']}',
-                    );
-                  } catch (error) {
-                    if (context.mounted) showError(context, error);
-                  }
-                },
-                child: JobCard(
-                  job: job,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => JobDetailPage(id: entry['jobId'] as int),
+  Future<void> _showJobDetailAndApplyModal(Map<String, dynamic> job) async {
+    int? chosenCvId = _selectedMatchCvId;
+    final coverCtrl = TextEditingController();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.8,
+          maxChildSize: 0.94,
+          minChildSize: 0.5,
+          builder: (ctx, scrollCtrl) => ListView(
+            controller: scrollCtrl,
+            padding: const EdgeInsets.all(20),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      (job['title'] ?? 'Vị trí tuyển dụng').toString(),
+                      style: const TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-      ),
-      PageControls(
-        result: result,
-        page: page,
-        previous: page > 0
-            ? () => setState(() {
-                page--;
-                result = load();
-              })
-            : null,
-        next: () => setState(() {
-          page++;
-          result = load();
-        }),
-      ),
-    ],
-  );
-}
-
-class ApplyPage extends StatefulWidget {
-  const ApplyPage({super.key, required this.job});
-  final Map<String, dynamic> job;
-  @override
-  State<ApplyPage> createState() => _ApplyPageState();
-}
-
-class _ApplyPageState extends State<ApplyPage> {
-  final cover = TextEditingController();
-  int? artifactId;
-  String? cvTitle;
-  bool busy = false;
-  late Future<dynamic> cvs = api.get('/students/me/cvs');
-  @override
-  void dispose() {
-    cover.dispose();
-    super.dispose();
-  }
-
-  Future<void> pickCv() async {
-    final picked = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-    if (picked == null) return;
-    setState(() => busy = true);
-    try {
-      final file = picked;
-      final id = await api.uploadCv(file, file.name);
-      setState(() {
-        artifactId = id;
-        cvTitle = file.name;
-        cvs = api.get('/students/me/cvs');
-      });
-    } catch (error) {
-      if (mounted) showError(context, error);
-    }
-    if (mounted) setState(() => busy = false);
-  }
-
-  Future<void> apply() async {
-    if (artifactId == null) {
-      showError(context, 'Chọn hoặc tải CV PDF trước khi ứng tuyển.');
-      return;
-    }
-    setState(() => busy = true);
-    try {
-      await api.post('/students/me/applications', {
-        'jobId': widget.job['id'],
-        'cvArtifactId': artifactId,
-        'coverLetter': cover.text.trim(),
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Ứng tuyển thành công.')));
-        Navigator.pop(context);
-      }
-    } catch (error) {
-      if (mounted) showError(context, error);
-    }
-    if (mounted) setState(() => busy = false);
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Ứng tuyển')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          '${widget.job['title']}',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 16),
-        FutureBuilder<dynamic>(
-          future: cvs,
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) return const LinearProgressIndicator();
-            final items = pageItems(snapshot.data)
-                .where(
-                  (cv) =>
-                      cv['latestArtifactStatus'] == 'READY' &&
-                      cv['latestArtifactId'] != null,
-                )
-                .toList();
-            return DropdownButtonFormField<int>(
-              initialValue: artifactId,
-              decoration: const InputDecoration(labelText: 'CV đã có'),
-              items: items
-                  .map(
-                    (cv) => DropdownMenuItem<int>(
-                      value: (cv['latestArtifactId'] as num).toInt(),
-                      child: Text('${cv['title']}'),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) => setState(() {
-                artifactId = value;
-                cvTitle = null;
-              }),
-            );
-          },
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: busy ? null : pickCv,
-          icon: const Icon(Icons.upload_file),
-          label: Text(cvTitle ?? 'Tải CV PDF mới'),
-        ),
-        TextField(
-          controller: cover,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            labelText: 'Thư giới thiệu (không bắt buộc)',
-          ),
-        ),
-        const SizedBox(height: 20),
-        FilledButton(
-          onPressed: busy ? null : apply,
-          child: const Text('Gửi đơn ứng tuyển'),
-        ),
-      ],
-    ),
-  );
-}
-
-class ApplicationsPage extends StatefulWidget {
-  const ApplicationsPage({super.key, required this.active});
-  final bool active;
-  @override
-  State<ApplicationsPage> createState() => _ApplicationsPageState();
-}
-
-class _ApplicationsPageState extends State<ApplicationsPage> {
-  int page = 0;
-  late Future<dynamic> result = load();
-  Future<dynamic> load() => api.get(
-    '/students/me/applications',
-    query: {'page': '$page', 'size': '10'},
-  );
-  @override
-  void didUpdateWidget(ApplicationsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) setState(() => result = load());
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Expanded(
-        child: DataList(
-          result: result,
-          builder: (items) => ListView(
-            children: items
-                .map(
-                  (item) => Card(
-                    child: ListTile(
-                      title: Text('${item['jobTitle']}'),
-                      subtitle: Text(
-                        '${item['companyName']} · ${item['status']}',
-                      ),
-                      onTap: () => showDialog(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          title: Text('${item['jobTitle']}'),
-                          content: Text(
-                            'Trạng thái: ${item['status']}\nCV: ${item['cvTitle'] ?? ''}\n${item['statusNote'] ?? ''}',
-                          ),
-                          actions: [
-                            if (item['status'] == 'APPLIED' ||
-                                item['status'] == 'PENDING')
-                              TextButton(
-                                onPressed: () async {
-                                  Navigator.pop(context);
-                                  try {
-                                    await api.patch(
-                                      '/students/me/applications/${item['id']}/cancel',
-                                      {},
-                                    );
-                                    if (mounted) {
-                                      setState(() => result = load());
-                                    }
-                                  } catch (error) {
-                                    if (context.mounted) {
-                                      showError(context, error);
-                                    }
-                                  }
-                                },
-                                child: const Text('Hủy đơn'),
-                              ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Đóng'),
-                            ),
-                          ],
+                  IconButton(
+                    icon: const Icon(Icons.bookmark_add_outlined,
+                        color: MoreJobColors.brand),
+                    onPressed: () async {
+                      try {
+                        await api.post(
+                          '/students/me/saved-jobs',
+                          body: {'jobId': job['id']},
+                        );
+                        if (mounted) showSuccess(context, 'Đã lưu việc làm!');
+                        await loadAll();
+                      } catch (e) {
+                        if (mounted) showError(context, e);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () {
+                  final compId = job['companyId'] ?? job['employerId'] ?? 1;
+                  showCompanyProfileSheet(
+                    context,
+                    api: api,
+                    companyId: compId,
+                    fallbackCompanyName: job['companyName']?.toString(),
+                  );
+                },
+                child: Row(
+                  children: [
+                    const Icon(Icons.business,
+                        size: 16, color: MoreJobColors.brand),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${job['companyName'] ?? 'Doanh nghiệp đối tác'} (Xem hồ sơ công ty)',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: MoreJobColors.brand,
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  StatusPill(
+                    label: (job['location'] ?? 'Việt Nam').toString(),
+                    color: MoreJobColors.navy,
                   ),
-                )
-                .toList(),
+                  StatusPill(
+                    label: (job['jobType'] ?? 'FULL_TIME').toString(),
+                    color: MoreJobColors.green,
+                  ),
+                  if (job['salaryRange'] != null || job['salaryMax'] != null)
+                    StatusPill(
+                      label:
+                          (job['salaryRange'] ?? '${job['salaryMax']} VND')
+                              .toString(),
+                      color: MoreJobColors.brand,
+                    ),
+                ],
+              ),
+              const Divider(height: 24),
+              const Text(
+                'Mô tả công việc (Job Description)',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                (job['description'] ?? 'Đang cập nhật mô tả chi tiết.')
+                    .toString(),
+                style: const TextStyle(fontSize: 13.5, height: 1.5),
+              ),
+              if (job['requirements'] != null) ...[
+                const SizedBox(height: 14),
+                const Text(
+                  'Yêu cầu ứng viên',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  job['requirements'].toString(),
+                  style: const TextStyle(fontSize: 13.5, height: 1.5),
+                ),
+              ],
+              const Divider(height: 28),
+              const Text(
+                'Nộp hồ sơ ứng tuyển ngay',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+              const SizedBox(height: 10),
+              if (cvs.isNotEmpty)
+                DropdownButtonFormField<int?>(
+                  initialValue: chosenCvId,
+                  decoration: const InputDecoration(
+                    labelText: 'Chọn CV trong tủ hồ sơ của bạn',
+                  ),
+                  items: cvs.map((c) {
+                    final id = c['id'] is int
+                        ? c['id'] as int
+                        : int.tryParse('${c['id']}');
+                    return DropdownMenuItem<int?>(
+                      value: id,
+                      child: Text(
+                        (c['title'] ?? c['fileName'] ?? 'CV #$id').toString(),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setModalState(() => chosenCvId = v),
+                ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: coverCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Thư giới thiệu ngắn gọn (Cover Letter)',
+                ),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  try {
+                    await api.post(
+                      '/students/me/applications',
+                      body: {
+                        'jobId': job['id'],
+                        'cvId': ?chosenCvId,
+                        if (coverCtrl.text.trim().isNotEmpty)
+                          'coverLetter': coverCtrl.text.trim(),
+                      },
+                    );
+                    if (mounted) {
+                      showSuccess(context, 'Đã nộp đơn ứng tuyển thành công!');
+                    }
+                    await loadAll();
+                  } catch (e) {
+                    if (mounted) showError(context, e);
+                  }
+                },
+                icon: const Icon(Icons.send_rounded),
+                label: const Text('Xác nhận Ứng tuyển'),
+              ),
+            ],
           ),
         ),
       ),
-      PageControls(
-        result: result,
-        page: page,
-        previous: page > 0
-            ? () => setState(() {
-                page--;
-                result = load();
-              })
-            : null,
-        next: () => setState(() {
-          page++;
-          result = load();
-        }),
+    );
+  }
+
+  void _openNotificationsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-    ],
-  );
-}
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        builder: (ctx, scrollCtrl) => ListView(
+          controller: scrollCtrl,
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Trung tâm Thông báo ($unread chưa đọc)',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 17,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    try {
+                      await api.patch('/notifications/me/read-all');
+                      await loadAll();
+                    } catch (_) {}
+                  },
+                  child: const Text('Đọc tất cả'),
+                ),
+              ],
+            ),
+            const Divider(),
+            if (notifications.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: Text('Chưa có thông báo mới.')),
+              )
+            else
+              ...notifications.map((n) {
+                final item = n as Map<String, dynamic>;
+                final isRead = item['read'] == true || item['isRead'] == true;
+                return ListTile(
+                  leading: Icon(
+                    isRead
+                        ? Icons.notifications_none
+                        : Icons.notifications_active,
+                    color: isRead ? MoreJobColors.muted : MoreJobColors.brand,
+                  ),
+                  title: Text(
+                    (item['title'] ?? 'Thông báo hệ thống').toString(),
+                    style: TextStyle(
+                      fontWeight: isRead ? FontWeight.w500 : FontWeight.w800,
+                    ),
+                  ),
+                  subtitle: Text((item['message'] ?? item['content'] ?? '')
+                      .toString()),
+                  onTap: () async {
+                    if (item['id'] != null) {
+                      try {
+                        await api.patch('/notifications/me/${item['id']}/read');
+                        await loadAll();
+                      } catch (_) {}
+                    }
+                  },
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
 
-class PageControls extends StatelessWidget {
-  const PageControls({
-    super.key,
-    required this.result,
-    required this.page,
-    required this.previous,
-    required this.next,
-  });
-  final Future<dynamic> result;
-  final int page;
-  final VoidCallback? previous;
-  final VoidCallback next;
-  @override
-  Widget build(BuildContext context) => FutureBuilder<dynamic>(
-    future: result,
-    builder: (context, snapshot) {
-      if (!snapshot.hasData) return const SizedBox.shrink();
-      final data = snapshot.data as Map<String, dynamic>;
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          IconButton(onPressed: previous, icon: const Icon(Icons.chevron_left)),
-          Text('Trang ${page + 1} / ${data['totalPages']}'),
-          IconButton(
-            onPressed: data['last'] == false ? next : null,
-            icon: const Icon(Icons.chevron_right),
-          ),
-        ],
-      );
-    },
-  );
-}
-
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key, required this.active, required this.onLogout});
-  final bool active;
-  final VoidCallback onLogout;
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  late Future<dynamic> profile = api.get('/student-profiles/me');
-  @override
-  void didUpdateWidget(ProfilePage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) {
-      setState(() => profile = api.get('/student-profiles/me'));
-    }
+  void _openAuxiliaryPage(String title, Widget page) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: Text(title)),
+          body: page,
+        ),
+      ),
+    );
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<dynamic>(
-    future: profile,
-    builder: (context, snapshot) {
-      final data = snapshot.data is Map
-          ? Map<String, dynamic>.from(snapshot.data as Map)
-          : <String, dynamic>{};
-      return ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            '${api.user?['fullName'] ?? ''}',
-            style: Theme.of(context).textTheme.headlineSmall,
+  Widget build(BuildContext context) {
+    final pages = [
+      // 0: Student Dashboard
+      StudentDashboardView(
+        profile: profile,
+        cvs: cvs,
+        applications: applications,
+        savedJobs: saved,
+        recommendedJobs: recommended,
+        interviews: const [],
+        onNavigateJobs: () => setState(() => tab = 1),
+        onNavigateCvStudio: () => setState(() => tab = 2),
+        onNavigateApplications: () => setState(() => tab = 3),
+        onNavigateAiInterview: () => _openAuxiliaryPage(
+          'Phỏng vấn thử AI 1-1',
+          AiInterviewPage(api: api),
+        ),
+        onSelectJob: _showJobDetailAndApplyModal,
+      ),
+      // 1: Recruitment Feed + CV Match Batches
+      _buildRecruitmentAndMatchTab(),
+      // 2: Full CV Studio
+      CvStudioPage(
+        api: api,
+        initialProfile: profile,
+        onOpenCheckoutTemplateUnlock: () => _openAuxiliaryPage(
+          'Nâng cấp & Mở khóa Pro',
+          BillingPricingPage(api: api),
+        ),
+      ),
+      // 3: Applications Kanban + Weekly Schedule
+      ApplicationsAndScheduleView(
+        api: api,
+        applications: applications,
+        onRefreshApplications: loadAll,
+      ),
+      // 4: 9 Career Utilities Hub
+      const UtilitiesHubPage(embedded: true),
+      // 5: Student Profile + Skills + Onboarding
+      StudentProfileEnhancedView(
+        api: api,
+        initialProfile: profile,
+        onProfileUpdated: loadAll,
+      ),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const MoreJobLogoText(fontSize: 21),
+        actions: [
+          IconButton(
+            tooltip: 'Tin nhắn với Nhà tuyển dụng',
+            onPressed: () => _openAuxiliaryPage(
+              'Tin nhắn & Hội thoại',
+              ConversationsView(api: api),
+            ),
+            icon: const Icon(Icons.forum_outlined),
           ),
-          Text('${api.user?['email'] ?? ''}'),
-          const SizedBox(height: 16),
-          if (snapshot.hasError)
-            Text('Chưa có hồ sơ sinh viên: ${snapshot.error}'),
-          if (snapshot.hasData) ...[
-            Text('Trường: ${data['university'] ?? 'Chưa cập nhật'}'),
-            Text('Ngành: ${data['major'] ?? 'Chưa cập nhật'}'),
-            Text('Thành phố: ${data['city'] ?? 'Chưa cập nhật'}'),
+          IconButton(
+            tooltip: 'Thông báo',
+            onPressed: _openNotificationsSheet,
+            icon: Badge(
+              isLabelVisible: unread > 0,
+              label: Text('$unread'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Gói Pro & Thanh toán PayOS',
+            onPressed: () => _openAuxiliaryPage(
+              'Nâng cấp AI Pro & PayOS',
+              BillingPricingPage(
+                api: api,
+                activeMatchBatchId: _activeMatchBatch?['id'] is int
+                    ? _activeMatchBatch!['id'] as int
+                    : null,
+              ),
+            ),
+            icon: const Icon(
+              Icons.workspace_premium,
+              color: MoreJobColors.brand,
+            ),
+          ),
+        ],
+      ),
+      drawer: _buildAppDrawer(),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : pages[tab],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (idx) => setState(() => tab = idx),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard_rounded),
+            label: 'Tổng quan',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.work_outline),
+            selectedIcon: Icon(Icons.work_rounded),
+            label: 'Việc làm',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.description_outlined),
+            selectedIcon: Icon(Icons.description_rounded),
+            label: 'CV Studio',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.view_kanban_outlined),
+            selectedIcon: Icon(Icons.view_kanban_rounded),
+            label: 'Ứng tuyển',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.grid_view_outlined),
+            selectedIcon: Icon(Icons.grid_view_rounded),
+            label: 'Tiện ích',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: 'Hồ sơ',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppDrawer() {
+    final fullName = (profile?['fullName'] ?? api.user?['fullName'] ?? 'Ứng viên')
+        .toString();
+    final emailStr =
+        (profile?['email'] ?? api.user?['email'] ?? '').toString();
+
+    return Drawer(
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              color: MoreJobColors.navy,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const MoreJobLogoText(fontSize: 22, darkBackground: true),
+                  const SizedBox(height: 12),
+                  Text(
+                    fullName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    emailStr,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.record_voice_over,
+                  color: MoreJobColors.brand),
+              title: const Text('Phỏng vấn thử AI (AI Mock Interview)'),
+              onTap: () {
+                Navigator.pop(context);
+                _openAuxiliaryPage(
+                  'Phỏng vấn thử AI 1-1',
+                  AiInterviewPage(api: api),
+                );
+              },
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.forum_outlined, color: MoreJobColors.navy),
+              title: const Text('Tin nhắn với Nhà tuyển dụng'),
+              onTap: () {
+                Navigator.pop(context);
+                _openAuxiliaryPage(
+                  'Tin nhắn & Hội thoại',
+                  ConversationsView(api: api),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.workspace_premium,
+                  color: MoreJobColors.brand),
+              title: const Text('Bảng giá AI Pro & Thanh toán PayOS'),
+              onTap: () {
+                Navigator.pop(context);
+                _openAuxiliaryPage(
+                  'Bảng giá & Nâng cấp AI Pro',
+                  BillingPricingPage(api: api),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.language, color: MoreJobColors.green),
+              title: const Text('Cổng Web Đồng bộ (Web Portal Hub)'),
+              onTap: () {
+                Navigator.pop(context);
+                _openAuxiliaryPage(
+                  'Cổng Web MoreJob',
+                  const WebPortalHub(),
+                );
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading:
+                  const Icon(Icons.logout, color: MoreJobColors.danger),
+              title: const Text(
+                'Đăng xuất',
+                style: TextStyle(color: MoreJobColors.danger),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await api.logout();
+                widget.onLogout();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecruitmentAndMatchTab() {
+    final matchItems = _activeMatchBatch != null &&
+            _activeMatchBatch!['matches'] is List
+        ? _activeMatchBatch!['matches'] as List
+        : (_activeMatchBatch != null && _activeMatchBatch!['items'] is List
+            ? _activeMatchBatch!['items'] as List
+            : const []);
+
+    return RefreshIndicator(
+      onRefresh: loadAll,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // Search & CV Match Batch Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.auto_awesome, color: MoreJobColors.brand),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Tìm việc thông minh & So khớp CV hàng loạt (AI Match)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: keyword,
+                          decoration: const InputDecoration(
+                            labelText: 'Vị trí, kỹ năng, công ty',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onSubmitted: (_) => loadAll(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: locationCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Địa điểm',
+                          ),
+                          onSubmitted: (_) => loadAll(),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (cvs.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<int?>(
+                      initialValue: _selectedMatchCvId,
+                      decoration: const InputDecoration(
+                        labelText: 'Chọn CV dùng để đối sánh AI Match',
+                      ),
+                      items: cvs.map((c) {
+                        final id = c['id'] is int
+                            ? c['id'] as int
+                            : int.tryParse('${c['id']}');
+                        return DropdownMenuItem<int?>(
+                          value: id,
+                          child: Text(
+                            (c['title'] ?? c['fileName'] ?? 'CV #$id')
+                                .toString(),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (v) =>
+                          setState(() => _selectedMatchCvId = v),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: loadAll,
+                          icon: const Icon(Icons.filter_list, size: 18),
+                          label: const Text('Lọc tin tuyển dụng'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed:
+                              _runningMatch ? null : _runCvMatchBatch,
+                          icon: const Icon(Icons.bolt, size: 18),
+                          label: Text(
+                            _runningMatch
+                                ? 'Đang chấm điểm...'
+                                : 'Chấm điểm CV Match',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Active CV Match Batch Results Banner
+          if (_activeMatchBatch != null) ...[
+            const SizedBox(height: 14),
+            Card(
+              color: MoreJobColors.panel,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Kết quả Phân tích CV Match Batch',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _openAuxiliaryPage(
+                            'Mở khóa Top Việc làm Phù hợp',
+                            BillingPricingPage(
+                              api: api,
+                              activeMatchBatchId:
+                                  _activeMatchBatch!['id'] is int
+                                      ? _activeMatchBatch!['id'] as int
+                                      : null,
+                            ),
+                          ),
+                          icon: const Icon(Icons.lock_open, size: 16),
+                          label: const Text('Mở khóa Top 3 / Top 5'),
+                        ),
+                      ],
+                    ),
+                    if (matchItems.isEmpty)
+                      Text(
+                        'Đã tạo phiên đối sánh #${_activeMatchBatch!['id'] ?? 'Mới'}. Xem danh sách việc làm gợi ý bên dưới.',
+                        style: const TextStyle(fontSize: 13),
+                      )
+                    else
+                      ...matchItems.take(5).map((m) {
+                        final item = m as Map<String, dynamic>;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            (item['jobTitle'] ?? item['title'] ?? 'Việc làm')
+                                .toString(),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                              (item['companyName'] ?? 'Doanh nghiệp').toString()),
+                          trailing: StatusPill(
+                            label: '${item['matchScore'] ?? item['score'] ?? 88}%',
+                            color: MoreJobColors.green,
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
           ],
           const SizedBox(height: 16),
-          FilledButton.tonal(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ProfileEditPage(profile: data),
+          Text(
+            'Tin tuyển dụng đang mở (${jobs.length})',
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          ...jobs.map((item) {
+            final job = item as Map<String, dynamic>;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(14),
+                leading: CircleAvatar(
+                  backgroundColor: MoreJobColors.brandSoft,
+                  child: const Icon(Icons.work_outline,
+                      color: MoreJobColors.brand),
                 ),
-              );
-              setState(() => profile = api.get('/student-profiles/me'));
-            },
-            child: const Text('Cập nhật hồ sơ'),
-          ),
-          TextButton(
-            onPressed: () async {
-              await api.logout();
-              widget.onLogout();
-            },
-            child: const Text('Đăng xuất'),
-          ),
+                title: Text(
+                  (job['title'] ?? 'Vị trí tuyển dụng').toString(),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 4),
+                    Text(
+                      '${job['companyName'] ?? 'Doanh nghiệp'} • ${job['location'] ?? 'Việt Nam'}',
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        StatusPill(
+                          label: (job['jobType'] ?? 'FULL_TIME').toString(),
+                          color: MoreJobColors.navy,
+                        ),
+                        if (job['salaryRange'] != null)
+                          StatusPill(
+                            label: job['salaryRange'].toString(),
+                            color: MoreJobColors.green,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+                trailing: ElevatedButton(
+                  onPressed: () => _showJobDetailAndApplyModal(job),
+                  child: const Text('Chi tiết'),
+                ),
+                onTap: () => _showJobDetailAndApplyModal(job),
+              ),
+            );
+          }),
         ],
-      );
-    },
-  );
-}
-
-class ProfileEditPage extends StatefulWidget {
-  const ProfileEditPage({super.key, required this.profile});
-  final Map<String, dynamic> profile;
-  @override
-  State<ProfileEditPage> createState() => _ProfileEditPageState();
-}
-
-class _ProfileEditPageState extends State<ProfileEditPage> {
-  late final university = TextEditingController(
-    text: '${widget.profile['university'] ?? ''}',
-  );
-  late final major = TextEditingController(
-    text: '${widget.profile['major'] ?? ''}',
-  );
-  late final city = TextEditingController(
-    text: '${widget.profile['city'] ?? ''}',
-  );
-  late final phone = TextEditingController(
-    text: '${widget.profile['phone'] ?? ''}',
-  );
-  @override
-  void dispose() {
-    university.dispose();
-    major.dispose();
-    city.dispose();
-    phone.dispose();
-    super.dispose();
+      ),
+    );
   }
-
-  Future<void> save() async {
-    final body = {
-      'university': university.text.trim(),
-      'major': major.text.trim(),
-      'city': city.text.trim(),
-      'phone': phone.text.trim(),
-    };
-    try {
-      if (widget.profile.isEmpty) {
-        await api.post('/student-profiles', body);
-      } else {
-        await api.patch('/student-profiles/me', body);
-      }
-      if (mounted) Navigator.pop(context);
-    } catch (error) {
-      if (mounted) showError(context, error);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Hồ sơ sinh viên')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        TextField(
-          controller: university,
-          decoration: const InputDecoration(labelText: 'Trường học'),
-        ),
-        TextField(
-          controller: major,
-          decoration: const InputDecoration(labelText: 'Ngành học'),
-        ),
-        TextField(
-          controller: city,
-          decoration: const InputDecoration(labelText: 'Thành phố'),
-        ),
-        TextField(
-          controller: phone,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(labelText: 'Số điện thoại'),
-        ),
-        const SizedBox(height: 24),
-        FilledButton(onPressed: save, child: const Text('Lưu hồ sơ')),
-      ],
-    ),
-  );
 }

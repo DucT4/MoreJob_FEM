@@ -5,9 +5,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 class ApiException implements Exception {
-  const ApiException(this.message, this.status);
+  const ApiException(this.message, this.status, {this.code});
   final String message;
   final int status;
+  final String? code;
   @override
   String toString() => message;
 }
@@ -24,17 +25,33 @@ class MoreJobApi {
   String? _refreshToken;
   Map<String, dynamic>? user;
 
+  String? get accessToken => _accessToken;
+  bool get isAuthenticated => _accessToken != null && user != null;
+  String get role => (user?['role'] ?? 'USER').toString();
+  bool get isAdmin => role == 'ADMIN';
+  bool get isStudent => role == 'USER';
+
+  String get originUrl {
+    final uri = Uri.parse(baseUrl);
+    return '${uri.scheme}://${uri.authority}';
+  }
+
   Future<bool> restore() async {
     _accessToken = await _storage.read(key: 'access_token');
     _refreshToken = await _storage.read(key: 'refresh_token');
     if (_accessToken == null) return false;
     try {
       user = await get('/auth/me') as Map<String, dynamic>;
-      if (user?['role'] != 'USER') {
+      final userRole = user?['role']?.toString();
+      if (userRole != 'USER' && userRole != 'ADMIN') {
         await logout();
         return false;
       }
-      await post('/student-profiles/me/initialize', {});
+      if (userRole == 'USER') {
+        try {
+          await post('/student-profiles/me/initialize', body: {});
+        } catch (_) {}
+      }
       return true;
     } catch (_) {
       await logout();
@@ -42,29 +59,58 @@ class MoreJobApi {
     }
   }
 
+  static List<Map<String, dynamic>> pageItems(dynamic data) {
+    if (data is Map && data['content'] is List) {
+      return (data['content'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+    }
+    if (data is List) {
+      return data
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+    }
+    return <Map<String, dynamic>>[];
+  }
+
   Future<void> login(String email, String password) async {
-    final data = await post('/auth/login', {
-      'email': email,
-      'password': password,
-    }, authenticated: false);
+    final data = await _request(
+      'POST',
+      '/auth/login',
+      body: {'email': email, 'password': password},
+      authenticated: false,
+    );
     await _saveSession(data as Map<String, dynamic>);
-    await post('/student-profiles/me/initialize', {});
+    if (isStudent) {
+      try {
+        await post('/student-profiles/me/initialize', body: {});
+      } catch (_) {}
+    }
   }
 
   Future<void> register(String name, String email, String password) async {
-    await post('/auth/register', {
-      'fullName': name,
-      'email': email,
-      'password': password,
-      'role': 'USER',
-    }, authenticated: false);
+    await _request(
+      'POST',
+      '/auth/register',
+      body: {
+        'fullName': name,
+        'email': email,
+        'password': password,
+        'role': 'USER',
+      },
+      authenticated: false,
+    );
     await login(email, password);
   }
 
   Future<void> _saveSession(Map<String, dynamic> data) async {
     final account = Map<String, dynamic>.from(data['user'] as Map);
-    if (account['role'] != 'USER') {
-      throw const ApiException('Ứng dụng này dành cho sinh viên.', 403);
+    final accountRole = account['role']?.toString();
+    if (accountRole != 'USER' && accountRole != 'ADMIN') {
+      throw const ApiException(
+        'MoreJob hiện chỉ hỗ trợ ứng viên và quản trị viên.',
+        403,
+      );
     }
     _accessToken = data['accessToken'] as String?;
     _refreshToken = data['refreshToken'] as String?;
@@ -74,6 +120,11 @@ class MoreJobApi {
   }
 
   Future<void> logout() async {
+    if (_accessToken != null) {
+      try {
+        await post('/auth/logout', body: {});
+      } catch (_) {}
+    }
     _accessToken = null;
     _refreshToken = null;
     user = null;
@@ -81,16 +132,53 @@ class MoreJobApi {
     await _storage.delete(key: 'refresh_token');
   }
 
-  Future<dynamic> get(String path, {Map<String, String>? query}) =>
-      _request('GET', path, query: query);
-  Future<dynamic> post(
-    String path,
-    Map<String, dynamic> body, {
+  Future<dynamic> get(
+    String path, {
+    Map<String, String>? query,
     bool authenticated = true,
-  }) => _request('POST', path, body: body, authenticated: authenticated);
-  Future<dynamic> patch(String path, Map<String, dynamic> body) =>
-      _request('PATCH', path, body: body);
-  Future<dynamic> delete(String path) => _request('DELETE', path);
+  }) => _request('GET', path, query: query, authenticated: authenticated);
+
+  Future<dynamic> post(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+    bool authenticated = true,
+  }) => _request(
+    'POST',
+    path,
+    body: body,
+    query: query,
+    authenticated: authenticated,
+  );
+
+  Future<dynamic> put(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+    bool authenticated = true,
+  }) => _request(
+    'PUT',
+    path,
+    body: body,
+    query: query,
+    authenticated: authenticated,
+  );
+
+  Future<dynamic> patch(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+    bool authenticated = true,
+  }) => _request(
+    'PATCH',
+    path,
+    body: body,
+    query: query,
+    authenticated: authenticated,
+  );
+
+  Future<dynamic> delete(String path, {bool authenticated = true}) =>
+      _request('DELETE', path, authenticated: authenticated);
 
   Future<dynamic> _request(
     String method,
@@ -100,7 +188,22 @@ class MoreJobApi {
     bool authenticated = true,
     bool retry = true,
   }) async {
-    final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
+    final fullUrl = path.startsWith('http://') || path.startsWith('https://')
+        ? path
+        : path.startsWith('/api/')
+        ? '$originUrl$path'
+        : '$baseUrl$path';
+    final filteredQuery = query == null
+        ? null
+        : Map<String, String>.fromEntries(
+            query.entries.where((e) => e.value.isNotEmpty),
+          );
+    final uri = Uri.parse(fullUrl).replace(
+      queryParameters:
+          filteredQuery != null && filteredQuery.isNotEmpty
+          ? filteredQuery
+          : null,
+    );
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (authenticated && _accessToken != null) {
       headers['Authorization'] = 'Bearer $_accessToken';
@@ -114,7 +217,14 @@ class MoreJobApi {
         authenticated &&
         retry &&
         await _refresh()) {
-      return _request(method, path, body: body, query: query, retry: false);
+      return _request(
+        method,
+        path,
+        body: body,
+        query: query,
+        authenticated: authenticated,
+        retry: false,
+      );
     }
     return _decode(response);
   }
@@ -122,9 +232,12 @@ class MoreJobApi {
   Future<bool> _refresh() async {
     if (_refreshToken == null) return false;
     try {
-      final data = await post('/auth/refresh', {
-        'refreshToken': _refreshToken,
-      }, authenticated: false);
+      final data = await _request(
+        'POST',
+        '/auth/refresh',
+        body: {'refreshToken': _refreshToken},
+        authenticated: false,
+      );
       await _saveSession(data as Map<String, dynamic>);
       return true;
     } catch (_) {
@@ -134,43 +247,211 @@ class MoreJobApi {
   }
 
   dynamic _decode(http.Response response) {
-    Map<String, dynamic> json;
+    if (response.statusCode == 204 || response.bodyBytes.isEmpty) {
+      return null;
+    }
+    dynamic decoded;
     try {
-      json =
-          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      decoded = jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {
       throw ApiException(
         'Máy chủ trả dữ liệu không hợp lệ.',
         response.statusCode,
       );
     }
-    if (response.statusCode >= 400 || json['success'] == false) {
-      throw ApiException(
-        (json['message'] ?? 'Yêu cầu thất bại.').toString(),
-        response.statusCode,
-      );
+    if (decoded is Map<String, dynamic>) {
+      if (response.statusCode >= 400 || decoded['success'] == false) {
+        throw ApiException(
+          (decoded['message'] ?? 'Yêu cầu thất bại.').toString(),
+          response.statusCode,
+          code: decoded['code']?.toString(),
+        );
+      }
+      if (decoded.containsKey('success') && decoded.containsKey('data')) {
+        return decoded['data'];
+      }
+      return decoded;
     }
-    return json['data'];
+    if (response.statusCode >= 400) {
+      throw ApiException('Yêu cầu thất bại.', response.statusCode);
+    }
+    return decoded;
   }
 
-  Future<int> uploadCv(PlatformFile file, String title) async {
-    if (file.extension?.toLowerCase() != 'pdf' || file.path == null) {
-      throw const ApiException('Vui lòng chọn tệp PDF trên thiết bị.', 400);
+  Future<dynamic> uploadMultipart(
+    String path, {
+    required String fileField,
+    required PlatformFile file,
+    Map<String, String> fields = const {},
+  }) async {
+    if (file.path == null) {
+      throw const ApiException('Không đọc được tệp trên thiết bị.', 400);
     }
     Future<http.Response> send() async {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$baseUrl/students/me/cvs/upload-artifact'),
+        Uri.parse('$baseUrl$path'),
       );
-      request.headers['Authorization'] = 'Bearer $_accessToken';
-      request.fields['title'] = title;
-      request.files.add(await http.MultipartFile.fromPath('file', file.path!));
+      if (_accessToken != null) {
+        request.headers['Authorization'] = 'Bearer $_accessToken';
+      }
+      request.fields.addAll(fields);
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          fileField,
+          file.path!,
+          filename: file.name,
+        ),
+      );
       return http.Response.fromStream(await _client.send(request));
     }
 
     var response = await send();
-    if (response.statusCode == 401 && await _refresh()) response = await send();
-    final data = _decode(response) as Map<String, dynamic>;
-    return (data['artifactId'] as num).toInt();
+    if (response.statusCode == 401 && await _refresh()) {
+      response = await send();
+    }
+    return _decode(response);
   }
+
+  Future<int> uploadCv(
+    PlatformFile file,
+    String title, {
+    String? summary,
+    bool defaultCv = false,
+  }) async {
+    final result = await uploadCvArtifact(
+      file,
+      title,
+      summary: summary,
+      defaultCv: defaultCv,
+    );
+    return (result['artifactId'] as num).toInt();
+  }
+
+  Future<Map<String, dynamic>> uploadCvArtifact(
+    PlatformFile file,
+    String title, {
+    String? summary,
+    bool defaultCv = false,
+  }) async {
+    if (file.extension?.toLowerCase() != 'pdf' &&
+        !file.name.toLowerCase().endsWith('.pdf')) {
+      throw const ApiException('Vui lòng chọn tệp PDF trên thiết bị.', 400);
+    }
+    final fields = <String, String>{
+      'title': title,
+      'defaultCv': defaultCv.toString(),
+    };
+    if (summary != null && summary.trim().isNotEmpty) {
+      fields['summary'] = summary.trim();
+    }
+    final data = await uploadMultipart(
+      '/students/me/cvs/upload-artifact',
+      fileField: 'file',
+      file: file,
+      fields: fields,
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<String> uploadAvatar(PlatformFile file) async {
+    final ext = (file.extension ?? '').toLowerCase();
+    if (!['jpg', 'jpeg', 'png', 'webp'].contains(ext)) {
+      throw const ApiException(
+        'Chỉ hỗ trợ ảnh JPG, PNG hoặc WEBP tối đa 5MB.',
+        400,
+      );
+    }
+    final data = await uploadMultipart(
+      '/uploads/avatars',
+      fileField: 'file',
+      file: file,
+    ) as Map<String, dynamic>;
+    final rawUrl = (data['url'] ?? '').toString();
+    if (rawUrl.isEmpty) {
+      throw const ApiException('Máy chủ chưa trả về đường dẫn ảnh.', 500);
+    }
+    return resolveImageUrl(rawUrl);
+  }
+
+  String resolveImageUrl(String? url) {
+    if (url == null || url.trim().isEmpty) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return '$originUrl${url.startsWith('/') ? '' : '/'}$url';
+  }
+
+  Future<Map<String, dynamic>> sendConversationAttachment({
+    required int conversationId,
+    required String clientMessageId,
+    required PlatformFile file,
+  }) async {
+    final data = await uploadMultipart(
+      '/conversations/$conversationId/attachments',
+      fileField: 'file',
+      file: file,
+      fields: {'clientMessageId': clientMessageId},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<Map<String, dynamic>> inspectAdminCvTemplate(PlatformFile file) async {
+    final data = await uploadMultipart(
+      '/admin/cv-templates/pdf/inspect',
+      fileField: 'referenceFile',
+      file: file,
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<Map<String, dynamic>> createAdminPdfTemplate({
+    required String displayName,
+    String? templateKey,
+    String? description,
+    String? category,
+    String? tags,
+    bool featured = false,
+    bool popular = false,
+    int sortOrder = 0,
+    required PlatformFile referenceFile,
+  }) async {
+    final fields = <String, String>{
+      'displayName': displayName,
+      'featured': featured.toString(),
+      'popular': popular.toString(),
+      'sortOrder': sortOrder.toString(),
+    };
+    if (templateKey != null && templateKey.trim().isNotEmpty) {
+      fields['templateKey'] = templateKey.trim();
+    }
+    if (description != null && description.trim().isNotEmpty) {
+      fields['description'] = description.trim();
+    }
+    if (category != null && category.trim().isNotEmpty) {
+      fields['category'] = category.trim();
+    }
+    if (tags != null && tags.trim().isNotEmpty) {
+      fields['tags'] = tags.trim();
+    }
+    final data = await uploadMultipart(
+      '/admin/cv-templates/pdf',
+      fileField: 'referenceFile',
+      file: referenceFile,
+      fields: fields,
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+}
+
+List<Map<String, dynamic>> pageItems(dynamic data) {
+  if (data is Map && data['content'] is List) {
+    return (data['content'] as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+  if (data is List) {
+    return data
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+  return <Map<String, dynamic>>[];
 }
